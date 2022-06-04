@@ -2,11 +2,15 @@
 
 pragma solidity ^0.8.0;
 
-import "hardhat/console.sol";
+import "@chainlink/contracts/src/v0.8/VRFConsumerBase.sol";
 
-contract WavePortal {
+contract WavePortal is VRFConsumerBase {
     uint256 totalWaves;
     uint256 private seed;
+
+    bytes32 internal keyHash;
+    uint256 internal fee;
+    uint256 public randomResult;
 
     event NewWave(address indexed from, uint256 timestamp, string message);
 
@@ -24,15 +28,17 @@ contract WavePortal {
      */
     mapping(address => uint256) public lastWavedAt;
 
-    constructor() payable {
-        console.log("We have been constructed!");
-        /*
-         * Set the initial seed
-         */
-        seed = (block.timestamp + block.difficulty) % 100;
+    constructor() 
+        VRFConsumerBase(
+            0x6168499c0cFfCaCD319c818142124B7A15E857ab, // VRF Coordinator -> Rinkeby Testnet 
+            0x01BE23585060835E02B77ef475b0Cc51aA1e0709  // LINK Token -> Rinkeby  Testnet
+        ) payable {
+        
+        keyHash = 0xd89b2bf150e3b9e13446986e571fb9cab24b13cea0a43ea20a6049a85cc807cc;
+        fee = 0.1 * 10 ** 18; // 0.1 LINK
     }
 
-    function wave(string memory _message) public {
+    function wave(string memory _message) external {
         /*
          * We need to make sure the current timestamp is at least 15-minutes bigger than the last timestamp we stored
          */
@@ -47,35 +53,48 @@ contract WavePortal {
         lastWavedAt[msg.sender] = block.timestamp;
 
         totalWaves += 1;
-        console.log("%s has waved!", msg.sender);
 
         waves.push(Wave(msg.sender, _message, block.timestamp));
 
         /*
          * Generate a new seed for the next user that sends a wave
          */
-        seed = (block.difficulty + block.timestamp + seed) % 100;
+        seed = uint256(getRandomNumber()) % uint256(100);
 
         if (seed <= 50) {
-            console.log("%s won!", msg.sender);
-
             uint256 prizeAmount = 0.0001 ether;
             require(
                 prizeAmount <= address(this).balance,
                 "Trying to withdraw more money than they contract has."
             );
+
             (bool success, ) = (msg.sender).call{value: prizeAmount}("");
             require(success, "Failed to withdraw money from contract.");
         }
-
+        
         emit NewWave(msg.sender, block.timestamp, _message);
     }
 
-    function getAllWaves() public view returns (Wave[] memory) {
+    function getAllWaves() external view returns (Wave[] memory) {
         return waves;
     }
 
-    function getTotalWaves() public view returns (uint256) {
+    function getTotalWaves() external view returns (uint256) {
         return totalWaves;
+    }
+
+    /** 
+    * Requests randomness from a user-provided seed
+    */
+    function getRandomNumber() private returns (bytes32 requestId) {
+        require(LINK.balanceOf(address(this)) > fee, "Not enough LINK - fill contract with faucet");
+        return requestRandomness(keyHash, fee);
+    }
+
+    /**
+    * Callback function used by VRF Coordinator
+    */
+    function fulfillRandomness(bytes32 requestId, uint256 randomness) internal override {
+        randomResult = randomness;
     }
 }
